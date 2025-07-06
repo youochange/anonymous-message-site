@@ -23,6 +23,8 @@ app.post('/submit', (req, res) => {
   res.json({ msg: 'Message saved! Thank you.' });
 });
 
-app.listen(3000, () => {
-  console.log('Server running on http://localhost:3000');
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
 });
