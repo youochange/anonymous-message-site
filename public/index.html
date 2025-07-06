@@ -241,6 +241,13 @@
       font-size: 0.9rem;
     }
 
+    .char-counter {
+      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.6);
+      text-align: right;
+      margin-top: 5px;
+    }
+
     @media (max-width: 600px) {
       .container {
         padding: 30px 20px;
@@ -268,7 +275,7 @@
       <p class="quote-author">- youochange</p>
     </div>
 
-    <form action="https://formspree.io/f/YOUR_FORM_ID" method="POST" id="messageForm">
+    <form id="messageForm">
       <div class="form-group">
         <label for="message" class="form-label">Your Message ✨</label>
         <textarea 
@@ -277,7 +284,9 @@
           id="message" 
           placeholder="Share your thoughts, ideas, or just say hello..."
           required
+          maxlength="1000"
         ></textarea>
+        <div class="char-counter" id="charCounter">0/1000</div>
       </div>
       
       <div class="form-group">
@@ -288,11 +297,9 @@
           name="name" 
           id="name" 
           placeholder="Enter your name, or stay anonymous"
+          maxlength="100"
         />
       </div>
-
-      <input type="hidden" name="_subject" value="New message from your website" />
-      <input type="hidden" name="_next" value="#success" />
 
       <button type="submit" class="submit-btn" id="submitBtn">
         <div class="loading-spinner" id="spinner"></div>
@@ -313,18 +320,23 @@
     const spinner = document.getElementById('spinner');
     const btnText = document.getElementById('btnText');
     const statusDiv = document.getElementById('status');
+    const messageInput = document.getElementById('message');
+    const charCounter = document.getElementById('charCounter');
 
-    // Show success message if redirected back
-    if (window.location.hash === '#success') {
-      showStatus('Message sent successfully! Thank you for reaching out. 🎉', 'success');
-      form.reset();
-    }
+    // Character counter
+    messageInput.addEventListener('input', function() {
+      const count = this.value.length;
+      charCounter.textContent = `${count}/1000`;
+      charCounter.style.color = count > 800 ? '#ff6b6b' : 'rgba(255, 255, 255, 0.6)';
+    });
 
-    form.addEventListener('submit', function(e) {
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
       const message = document.getElementById('message').value.trim();
+      const name = document.getElementById('name').value.trim();
       
       if (!message) {
-        e.preventDefault();
         showStatus('Please enter a message before sending! 📝', 'error');
         return;
       }
@@ -333,6 +345,34 @@
       submitBtn.disabled = true;
       spinner.style.display = 'inline-block';
       btnText.textContent = 'Sending...';
+
+      try {
+        const response = await fetch('/submit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message, name })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          showStatus(data.msg + ' 🎉', 'success');
+          form.reset();
+          charCounter.textContent = '0/1000';
+          charCounter.style.color = 'rgba(255, 255, 255, 0.6)';
+        } else {
+          throw new Error(data.error || 'Failed to send message');
+        }
+      } catch (error) {
+        showStatus('Failed to send message: ' + error.message + ' 😞', 'error');
+      } finally {
+        // Hide loading state
+        submitBtn.disabled = false;
+        spinner.style.display = 'none';
+        btnText.textContent = 'Send Message 🚀';
+      }
     });
 
     function showStatus(message, type) {
