@@ -96,8 +96,8 @@ const writeMessages = async (messages) => {
 };
 
 // Routes
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/api/health', (req, res) => {
@@ -111,41 +111,15 @@ app.get('/api/health', (req, res) => {
 app.get('/api/messages', async (req, res) => {
   try {
     const messages = await readMessages();
-    // Return all messages for admin panel, reversed (newest first)
-    const sortedMessages = messages.slice().reverse();
+    // Return only the last 10 messages for privacy
+    const recentMessages = messages.slice(-10).reverse();
     res.json({ 
-      messages: sortedMessages,
+      messages: recentMessages,
       total: messages.length
     });
   } catch (error) {
     console.error('Error reading messages:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
-  }
-});
-
-app.delete('/api/messages/:id', async (req, res) => {
-  try {
-    const messageId = req.params.id;
-    const messages = await readMessages();
-    
-    const initialLength = messages.length;
-    const filteredMessages = messages.filter(msg => msg.id !== messageId);
-    
-    if (filteredMessages.length === initialLength) {
-      return res.status(404).json({ error: 'Message not found' });
-    }
-    
-    await writeMessages(filteredMessages);
-    
-    console.log(`Message ${messageId} deleted`);
-    res.json({ 
-      success: true,
-      message: 'Message deleted successfully' 
-    });
-    
-  } catch (error) {
-    console.error('Error deleting message:', error);
-    res.status(500).json({ error: 'Failed to delete message' });
   }
 });
 
