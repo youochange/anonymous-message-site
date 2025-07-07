@@ -1,212 +1,415 @@
 const express = require('express');
+const cors = require('cors');
 const fs = require('fs').promises;
 const path = require('path');
-const cors = require('cors');
-const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { body, validationResult } = require('express-validator');
+const crypto = require('crypto');
 
 const app = express();
+let PORT = process.env.PORT || 3000;
 
-// Security middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-    },
-  },
-}));
-
-// CORS configuration
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://yourdomain.com', 'https://www.yourdomain.com'] 
-    : ['http://localhost:3000', 'http://127.0.0.1:3000'],
-  credentials: true
-}));
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.static('public'));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: {
-    error: 'Too many messages sent. Please try again later.',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many messages submitted, please try again later.' }
 });
 
-app.use('/submit', limiter);
+const MESSAGES_FILE = path.join(__dirname, 'messages.json');
+const ADMIN_FILE = path.join(__dirname, 'admin.json');
 
-// Body parser middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Serve static files
-app.use(express.static('public'));
-
-// Validation middleware
-const validateMessage = [
-  body('message')
-    .isLength({ min: 1, max: 1000 })
-    .withMessage('Message must be between 1 and 1000 characters')
-    .trim()
-    .escape(),
-  body('name')
-    .optional()
-    .isLength({ max: 100 })
-    .withMessage('Name must be less than 100 characters')
-    .trim()
-    .escape(),
-];
-
-// Utility functions
-const getMessagesFilePath = () => path.join(__dirname, 'data', 'messages.json');
-
-const ensureDataDirectory = async () => {
-  const dataDir = path.join(__dirname, 'data');
+// Initialize data files
+async function initializeFiles() {
   try {
-    await fs.access(dataDir);
+    await fs.access(MESSAGES_FILE);
   } catch {
-    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(MESSAGES_FILE, JSON.stringify([]));
   }
-};
-
-const readMessages = async () => {
-  const filePath = getMessagesFilePath();
+  
   try {
-    const data = await fs.readFile(filePath, 'utf8');
+    await fs.access(ADMIN_FILE);
+  } catch {
+    const adminData = {
+      username: 'admin',
+      password: 'changeme123',
+      sessionSecret: 'your-secret-key-here'
+    };
+    await fs.writeFile(ADMIN_FILE, JSON.stringify(adminData, null, 2));
+  }
+}
+
+// Helper functions
+async function readMessages() {
+  try {
+    const data = await fs.readFile(MESSAGES_FILE, 'utf8');
     return JSON.parse(data);
   } catch (error) {
-    if (error.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
+    return [];
   }
-};
+}
 
-const writeMessages = async (messages) => {
-  const filePath = getMessagesFilePath();
-  await fs.writeFile(filePath, JSON.stringify(messages, null, 2));
-};
+async function saveMessages(messages) {
+  await fs.writeFile(MESSAGES_FILE, JSON.stringify(messages, null, 2));
+}
 
-// Routes
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
-
-app.get('/api/messages', async (req, res) => {
+// IP Geolocation function (using a free API)
+async function getLocationFromIP(ip) {
   try {
-    const messages = await readMessages();
-    // Return only the last 10 messages for privacy
-    const recentMessages = messages.slice(-10).reverse();
-    res.json({ 
-      messages: recentMessages,
-      total: messages.length
-    });
+    // Remove IPv6 prefix if present
+    const cleanIP = ip.replace(/^::ffff:/, '');
+    if (cleanIP === '127.0.0.1' || cleanIP === '::1') {
+      return { country: 'Local', city: 'Local', region: 'Local' };
+    }
+    
+    const response = await fetch(`http://ip-api.com/json/${cleanIP}`);
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      return {
+        country: data.country,
+        city: data.city,
+        region: data.regionName,
+        timezone: data.timezone,
+        isp: data.isp
+      };
+    }
   } catch (error) {
-    console.error('Error reading messages:', error);
-    res.status(500).json({ error: 'Failed to fetch messages' });
+    console.error('Error getting location:', error);
   }
-});
+  return null;
+}
 
-app.post('/submit', validateMessage, async (req, res) => {
+// Parse User Agent for detailed info
+function parseUserAgent(userAgent) {
+  const info = {
+    browser: 'Unknown',
+    os: 'Unknown',
+    device: 'Unknown',
+    isMobile: false,
+    isBot: false
+  };
+  
+  if (!userAgent) return info;
+  
+  // Check for bots
+  const botPatterns = ['bot', 'crawler', 'spider', 'scraper'];
+  info.isBot = botPatterns.some(pattern => userAgent.toLowerCase().includes(pattern));
+  
+  // Browser detection
+  if (userAgent.includes('Chrome')) info.browser = 'Chrome';
+  else if (userAgent.includes('Firefox')) info.browser = 'Firefox';
+  else if (userAgent.includes('Safari')) info.browser = 'Safari';
+  else if (userAgent.includes('Edge')) info.browser = 'Edge';
+  else if (userAgent.includes('Opera')) info.browser = 'Opera';
+  
+  // OS detection
+  if (userAgent.includes('Windows')) info.os = 'Windows';
+  else if (userAgent.includes('Mac')) info.os = 'macOS';
+  else if (userAgent.includes('Linux')) info.os = 'Linux';
+  else if (userAgent.includes('Android')) info.os = 'Android';
+  else if (userAgent.includes('iOS')) info.os = 'iOS';
+  
+  // Device detection
+  if (userAgent.includes('Mobile')) {
+    info.device = 'Mobile';
+    info.isMobile = true;
+  } else if (userAgent.includes('Tablet')) {
+    info.device = 'Tablet';
+    info.isMobile = true;
+  } else {
+    info.device = 'Desktop';
+  }
+  
+  return info;
+}
+
+// Generate unique fingerprint for tracking return visitors
+function generateFingerprint(req) {
+  const data = [
+    req.ip,
+    req.get('User-Agent'),
+    req.get('Accept-Language'),
+    req.get('Accept-Encoding')
+  ].join('|');
+  
+  return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
+}
+
+// Enhanced message submission endpoint
+app.post('/submit', limiter, async (req, res) => {
   try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: errors.array() 
-      });
-    }
-
     const { message, name } = req.body;
     
-    // Create message object
-    const msg = {
+    // Validation
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    if (message.length > 1000) {
+      return res.status(400).json({ error: 'Message too long' });
+    }
+    if (name && name.length > 100) {
+      return res.status(400).json({ error: 'Name too long' });
+    }
+
+    // Get IP address
+    const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'];
+    
+    // Get location data
+    const location = await getLocationFromIP(ip);
+    
+    // Parse user agent
+    const userAgentInfo = parseUserAgent(req.get('User-Agent'));
+    
+    // Generate fingerprint
+    const fingerprint = generateFingerprint(req);
+    
+    // Create comprehensive message object
+    const messageObj = {
       id: Date.now().toString(),
       message: message.trim(),
-      name: name?.trim() || 'Anonymous',
+      name: name ? name.trim() : 'anonymous',
       timestamp: new Date().toISOString(),
-      ip: req.ip || req.connection.remoteAddress, // For analytics (consider privacy)
+      
+      // Network Information
+      ip: ip,
+      fingerprint: fingerprint,
+      location: location,
+      
+      // Device/Browser Information
+      userAgent: req.get('User-Agent') || 'Unknown',
+      browser: userAgentInfo.browser,
+      os: userAgentInfo.os,
+      device: userAgentInfo.device,
+      isMobile: userAgentInfo.isMobile,
+      isBot: userAgentInfo.isBot,
+      
+      // Request Headers
+      headers: {
+        acceptLanguage: req.get('Accept-Language'),
+        acceptEncoding: req.get('Accept-Encoding'),
+        referer: req.get('Referer'),
+        origin: req.get('Origin'),
+        connection: req.get('Connection'),
+        dnt: req.get('DNT'), // Do Not Track
+        secFetchSite: req.get('Sec-Fetch-Site'),
+        secFetchMode: req.get('Sec-Fetch-Mode'),
+        secFetchUser: req.get('Sec-Fetch-User'),
+        secFetchDest: req.get('Sec-Fetch-Dest')
+      },
+      
+      // Additional Metadata
+      messageLength: message.length,
+      hasName: !!name,
+      submissionDay: new Date().toLocaleDateString(),
+      submissionHour: new Date().getHours(),
+      
+      // Security flags
+      suspiciousActivity: {
+        isBot: userAgentInfo.isBot,
+        hasReferer: !!req.get('Referer'),
+        multipleSubmissions: false // Will be updated below
+      }
     };
-
-    // Ensure data directory exists
-    await ensureDataDirectory();
 
     // Read existing messages
     const messages = await readMessages();
     
-    // Add new message
-    messages.push(msg);
+    // Check for multiple submissions from same fingerprint
+    const previousSubmissions = messages.filter(msg => 
+      msg.fingerprint === fingerprint && 
+      new Date(msg.timestamp) > new Date(Date.now() - 24 * 60 * 60 * 1000)
+    );
     
-    // Keep only last 1000 messages to prevent file from growing too large
-    if (messages.length > 1000) {
-      messages.splice(0, messages.length - 1000);
+    if (previousSubmissions.length > 0) {
+      messageObj.suspiciousActivity.multipleSubmissions = true;
+      messageObj.suspiciousActivity.previousSubmissions = previousSubmissions.length;
     }
     
-    // Write messages back to file
-    await writeMessages(messages);
+    // Add message to array
+    messages.unshift(messageObj);
     
-    console.log(`New message received from ${msg.name}: ${msg.message.substring(0, 50)}...`);
+    // Keep only last 1000 messages
+    if (messages.length > 1000) {
+      messages.splice(1000);
+    }
+    
+    // Save messages
+    await saveMessages(messages);
+    
+    // Log submission with key details
+    console.log(`New message from ${messageObj.name} (${messageObj.location?.city || 'Unknown location'})`);
+    console.log(`Device: ${messageObj.device} | Browser: ${messageObj.browser} | OS: ${messageObj.os}`);
+    console.log(`Message: ${message.substring(0, 50)}...`);
     
     res.json({ 
-      success: true,
-      msg: 'Message saved successfully! Thank you for reaching out.',
-      id: msg.id
+      msg: 'Message submitted successfully! Thank you for your message.',
+      id: messageObj.id 
     });
     
   } catch (error) {
-    console.error('Error saving message:', error);
-    res.status(500).json({ 
-      error: 'Failed to save message. Please try again later.' 
-    });
+    console.error('Error submitting message:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Error handling middleware
+// Enhanced admin endpoint with analytics
+app.get('/admin/messages', async (req, res) => {
+  try {
+    const { username, password } = req.query;
+    
+    const adminData = JSON.parse(await fs.readFile(ADMIN_FILE, 'utf8'));
+    
+    if (username !== adminData.username || password !== adminData.password) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const messages = await readMessages();
+    
+    // Generate analytics
+    const analytics = {
+      total: messages.length,
+      today: messages.filter(msg => 
+        new Date(msg.timestamp).toDateString() === new Date().toDateString()
+      ).length,
+      uniqueVisitors: new Set(messages.map(msg => msg.fingerprint)).size,
+      countries: {},
+      browsers: {},
+      devices: {},
+      hourlyDistribution: {},
+      suspiciousMessages: messages.filter(msg => 
+        msg.suspiciousActivity?.isBot || msg.suspiciousActivity?.multipleSubmissions
+      ).length
+    };
+    
+    // Count by categories
+    messages.forEach(msg => {
+      // Countries
+      const country = msg.location?.country || 'Unknown';
+      analytics.countries[country] = (analytics.countries[country] || 0) + 1;
+      
+      // Browsers
+      analytics.browsers[msg.browser] = (analytics.browsers[msg.browser] || 0) + 1;
+      
+      // Devices
+      analytics.devices[msg.device] = (analytics.devices[msg.device] || 0) + 1;
+      
+      // Hourly distribution
+      const hour = new Date(msg.timestamp).getHours();
+      analytics.hourlyDistribution[hour] = (analytics.hourlyDistribution[hour] || 0) + 1;
+    });
+    
+    res.json({ 
+      messages: messages.slice(0, 50), // Only send first 50 for performance
+      analytics,
+      total: messages.length 
+    });
+    
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete message endpoint
+app.delete('/admin/messages/:id', async (req, res) => {
+  try {
+    const { username, password } = req.query;
+    const { id } = req.params;
+    
+    const adminData = JSON.parse(await fs.readFile(ADMIN_FILE, 'utf8'));
+    
+    if (username !== adminData.username || password !== adminData.password) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const messages = await readMessages();
+    const filteredMessages = messages.filter(msg => msg.id !== id);
+    
+    if (filteredMessages.length === messages.length) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    
+    await saveMessages(filteredMessages);
+    res.json({ msg: 'Message deleted successfully' });
+    
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Serve frontend
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ 
-    error: 'Something went wrong!',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
-  });
+  res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
+// Find available port
+function findAvailablePort(startPort, maxPort = 65535) {
+  return new Promise((resolve, reject) => {
+    const server = require('net').createServer();
+    
+    server.listen(startPort, () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+    
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        if (startPort < maxPort) {
+          resolve(findAvailablePort(startPort + 1, maxPort));
+        } else {
+          reject(new Error('No available ports found'));
+        }
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
+// Start server
+async function startServer() {
+  try {
+    await initializeFiles();
+    
+    try {
+      PORT = await findAvailablePort(PORT);
+    } catch (error) {
+      console.error('Error finding available port:', error);
+      process.exit(1);
+    }
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 Enhanced Anonymous Message Server running on port ${PORT}`);
+      console.log(`📱 Visit: http://localhost:${PORT}`);
+      console.log(`🔧 Admin panel: http://localhost:${PORT}/admin/messages?username=admin&password=changeme123`);
+      console.log(`⚠️  Remember to change the default admin credentials!`);
+      console.log(`📊 Enhanced tracking enabled - collecting comprehensive user data`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
 
-const port = process.env.PORT || 3000;
-
-app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`📁 Data directory: ${path.join(__dirname, 'data')}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+startServer();

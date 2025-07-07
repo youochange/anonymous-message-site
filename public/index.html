@@ -1,399 +1,62 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Leave Me a Message</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      font-family: 'Inter', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow-x: hidden;
-    }
-
-    .background-animation {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: -1;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-
-    .floating-shapes {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-
-    .shape {
-      position: absolute;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 50%;
-      animation: float 6s ease-in-out infinite;
-    }
-
-    .shape:nth-child(1) {
-      width: 80px;
-      height: 80px;
-      top: 10%;
-      left: 10%;
-      animation-delay: 0s;
-    }
-
-    .shape:nth-child(2) {
-      width: 120px;
-      height: 120px;
-      top: 70%;
-      right: 10%;
-      animation-delay: 2s;
-    }
-
-    .shape:nth-child(3) {
-      width: 60px;
-      height: 60px;
-      top: 40%;
-      left: 80%;
-      animation-delay: 4s;
-    }
-
-    @keyframes float {
-      0%, 100% { transform: translateY(0px) rotate(0deg); }
-      50% { transform: translateY(-20px) rotate(180deg); }
-    }
-
-    .container {
-      max-width: 500px;
-      width: 90%;
-      padding: 40px;
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(20px);
-      border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-      position: relative;
-      z-index: 1;
-    }
-
-    .header {
-      text-align: center;
-      margin-bottom: 30px;
-    }
-
-    .title {
-      font-size: 2.5rem;
-      font-weight: 700;
-      color: white;
-      margin-bottom: 10px;
-      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-    }
-
-    .username {
-      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      font-weight: 600;
-    }
-
-    .quote {
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 1.1rem;
-      font-style: italic;
-      margin-bottom: 5px;
-    }
-
-    .quote-author {
-      color: rgba(255, 255, 255, 0.6);
-      font-size: 0.9rem;
-    }
-
-    .form-group {
-      margin-bottom: 25px;
-    }
-
-    .form-label {
-      display: block;
-      color: white;
-      font-weight: 500;
-      margin-bottom: 8px;
-      font-size: 0.95rem;
-    }
-
-    .form-input, .form-textarea {
-      width: 100%;
-      padding: 15px 20px;
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 12px;
-      color: white;
-      font-size: 16px;
-      backdrop-filter: blur(10px);
-      transition: all 0.3s ease;
-      resize: vertical;
-    }
-
-    .form-input::placeholder, .form-textarea::placeholder {
-      color: rgba(255, 255, 255, 0.6);
-    }
-
-    .form-input:focus, .form-textarea:focus {
-      outline: none;
-      border-color: rgba(255, 255, 255, 0.4);
-      background: rgba(255, 255, 255, 0.15);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
-    }
-
-    .form-textarea {
-      min-height: 120px;
-      font-family: inherit;
-    }
-
-    .submit-btn {
-      width: 100%;
-      padding: 16px;
-      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-      border: none;
-      border-radius: 12px;
-      color: white;
-      font-size: 1.1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .submit-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
-    }
-
-    .submit-btn:active {
-      transform: translateY(0);
-    }
-
-    .submit-btn:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
-    }
-
-    .loading-spinner {
-      display: none;
-      width: 20px;
-      height: 20px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-top: 2px solid white;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-right: 10px;
-    }
-
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-
-    .status-message {
-      margin-top: 20px;
-      padding: 15px;
-      border-radius: 12px;
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      animation: slideIn 0.3s ease;
-    }
-
-    .status-success {
-      background: rgba(76, 175, 80, 0.2);
-      color: #c8e6c9;
-      border-color: rgba(76, 175, 80, 0.3);
-    }
-
-    .status-error {
-      background: rgba(244, 67, 54, 0.2);
-      color: #ffcdd2;
-      border-color: rgba(244, 67, 54, 0.3);
-    }
-
-    @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .footer {
-      text-align: center;
-      margin-top: 30px;
-      color: rgba(255, 255, 255, 0.6);
-      font-size: 0.9rem;
-    }
-
-    .char-counter {
-      font-size: 0.8rem;
-      color: rgba(255, 255, 255, 0.6);
-      text-align: right;
-      margin-top: 5px;
-    }
-
-    @media (max-width: 600px) {
-      .container {
-        padding: 30px 20px;
-      }
-      
-      .title {
-        font-size: 2rem;
-      }
-    }
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" />
 </head>
-<body>
-  <div class="background-animation">
-    <div class="floating-shapes">
-      <div class="shape"></div>
-      <div class="shape"></div>
-      <div class="shape"></div>
-    </div>
-  </div>
-
-  <div class="container">
-    <div class="header">
-      <h1 class="title">Leave a Message for <span class="username">youochange</span></h1>
-      <p class="quote">"Every message matters, every voice counts."</p>
-      <p class="quote-author">- youochange</p>
-    </div>
-
-    <form id="messageForm">
-      <div class="form-group">
-        <label for="message" class="form-label">Your Message ✨</label>
-        <textarea 
-          class="form-textarea" 
-          name="message" 
-          id="message" 
-          placeholder="Share your thoughts, ideas, or just say hello..."
-          required
-          maxlength="1000"
-        ></textarea>
-        <div class="char-counter" id="charCounter">0/1000</div>
+<body class="bg-light">
+  <div class="container py-5">
+    <h1 class="text-center mb-4">Leave a Message for <strong>youochange</strong></h1>
+    <blockquote class="blockquote text-center">
+      <p class="mb-0"></p>
+      <footer class="blockquote-footer">youochange</footer>
+    </blockquote>
+    <form id="messageForm" class="mt-4">
+      <div class="mb-3">
+        <label for="message" class="form-label">Your Message</label>
+        <textarea class="form-control" id="message" rows="5" placeholder="Enter your message..." required></textarea>
       </div>
-      
-      <div class="form-group">
-        <label for="name" class="form-label">Your Name (Optional) 👤</label>
-        <input 
-          type="text" 
-          class="form-input" 
-          name="name" 
-          id="name" 
-          placeholder="Enter your name, or stay anonymous"
-          maxlength="100"
-        />
+      <div class="mb-3">
+        <label for="name" class="form-label">Your Name (Optional)</label>
+        <input type="text" class="form-control" id="name" placeholder="Enter your name, or leave it anonymous" />
       </div>
-
-      <button type="submit" class="submit-btn" id="submitBtn">
-        <div class="loading-spinner" id="spinner"></div>
-        <span id="btnText">Send Message 🚀</span>
-      </button>
+      <button type="submit" class="btn btn-primary">Submit</button>
     </form>
-
-    <div id="status"></div>
-
-    <div class="footer">
-      <p>Your message will be sent securely ✅</p>
-    </div>
+    <div id="status" class="mt-3"></div>
   </div>
 
   <script>
-    const form = document.getElementById('messageForm');
-    const submitBtn = document.getElementById('submitBtn');
-    const spinner = document.getElementById('spinner');
-    const btnText = document.getElementById('btnText');
-    const statusDiv = document.getElementById('status');
-    const messageInput = document.getElementById('message');
-    const charCounter = document.getElementById('charCounter');
-
-    // Character counter
-    messageInput.addEventListener('input', function() {
-      const count = this.value.length;
-      charCounter.textContent = `${count}/1000`;
-      charCounter.style.color = count > 800 ? '#ff6b6b' : 'rgba(255, 255, 255, 0.6)';
-    });
-
-    form.addEventListener('submit', async function(e) {
+    document.getElementById('messageForm').addEventListener('submit', async function(e) {
       e.preventDefault();
-      
+
       const message = document.getElementById('message').value.trim();
-      const name = document.getElementById('name').value.trim();
-      
+      const name = document.getElementById('name').value.trim() || 'anonymous';
+      const statusDiv = document.getElementById('status');
+
       if (!message) {
-        showStatus('Please enter a message before sending! 📝', 'error');
+        statusDiv.innerHTML = `<div class="alert alert-danger">Please enter a message.</div>`;
         return;
       }
 
-      // Show loading state
-      submitBtn.disabled = true;
-      spinner.style.display = 'inline-block';
-      btnText.textContent = 'Sending...';
-
       try {
-        const response = await fetch('/submit', {
+        const res = await fetch('/submit', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, name })
         });
 
-        const data = await response.json();
-
-        if (response.ok) {
-          showStatus(data.msg + ' 🎉', 'success');
-          form.reset();
-          charCounter.textContent = '0/1000';
-          charCounter.style.color = 'rgba(255, 255, 255, 0.6)';
-        } else {
-          throw new Error(data.error || 'Failed to send message');
+        if (!res.ok) {
+          throw new Error(`Server error: ${res.status}`);
         }
+
+        const data = await res.json();
+        statusDiv.innerHTML = `<div class="alert alert-success">${data.msg}</div>`;
+        document.getElementById('messageForm').reset();
       } catch (error) {
-        showStatus('Failed to send message: ' + error.message + ' 😞', 'error');
-      } finally {
-        // Hide loading state
-        submitBtn.disabled = false;
-        spinner.style.display = 'none';
-        btnText.textContent = 'Send Message 🚀';
+        statusDiv.innerHTML = `<div class="alert alert-danger">Failed to submit message: ${error.message}</div>`;
       }
-    });
-
-    function showStatus(message, type) {
-      statusDiv.innerHTML = `<div class="status-message status-${type}">${message}</div>`;
-      
-      // Auto-hide after 5 seconds
-      setTimeout(() => {
-        statusDiv.innerHTML = '';
-      }, 5000);
-    }
-
-    // Add some interactive hover effects
-    const formInputs = document.querySelectorAll('.form-input, .form-textarea');
-    formInputs.forEach(input => {
-      input.addEventListener('focus', function() {
-        this.style.transform = 'translateY(-2px)';
-      });
-      
-      input.addEventListener('blur', function() {
-        this.style.transform = 'translateY(0)';
-      });
     });
   </script>
 </body>
