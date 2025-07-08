@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Render-specific configurations
-app.set('trust proxy', 1); // Essential for Render's proxy setup
+app.set('trust proxy', 1);
 
 // Enhanced CORS for Render deployment
 const corsOptions = {
@@ -44,51 +44,109 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Rate limiting - optimized for Render
+// Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 15, // Slightly more lenient for global users
+  max: 15,
   message: { error: 'Too many requests. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path.startsWith('/admin') || req.path === '/health'
 });
 
-// File paths - check for persistent disk or use temp
-const DATA_DIR = process.env.RENDER_PERSISTENT_DISK || __dirname;
+// File paths
+const DATA_DIR = process.env.RENDER_PERSISTENT_DISK || path.join(__dirname, 'data');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
-const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
 
-// Initialize data files with better error handling
+// Admin credentials
+const ADMIN_CONFIG = {
+  username: process.env.ADMIN_USERNAME || 'admin',
+  password: process.env.ADMIN_PASSWORD || 'changeme123',
+  sessionSecret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex')
+};
+
+// Validate admin credentials
+function validateAdminConfig() {
+  if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+    console.log('WARNING: Using default admin credentials! Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables!');
+  }
+  
+  if (ADMIN_CONFIG.username === 'admin' && ADMIN_CONFIG.password === 'changeme123') {
+    console.log('SECURITY WARNING: Using default admin credentials in production!');
+  }
+}
+
+// Initialize data files
 async function initializeFiles() {
   try {
-    // Ensure data directory exists
     await fs.mkdir(DATA_DIR, { recursive: true });
     
-    // Initialize messages file
     try {
       await fs.access(MESSAGES_FILE);
+      console.log('Messages file found');
     } catch {
       await fs.writeFile(MESSAGES_FILE, JSON.stringify([]));
-      console.log('📁 Created new messages.json file');
+      console.log('Created new messages.json file');
     }
     
-    // Initialize admin file
-    try {
-      await fs.access(ADMIN_FILE);
-    } catch {
-      const adminData = {
-        username: process.env.ADMIN_USERNAME || 'admin',
-        password: process.env.ADMIN_PASSWORD || 'changeme123',
-        sessionSecret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-        createdAt: new Date().toISOString()
+    validateAdminConfig();
+    
+  } catch (error) {
+    console.error('Error initializing files:', error);
+    throw error;
+  }
+}
+
+// Helper functions
+async function readMessages() {
+  try {
+    const data = await fs.readFile(MESSAGES_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading messages:', error);
+    return [];
+  }
+}
+
+async function saveMessages(messages) {
+  try {
+    await fs.writeFile(MESSAGES_FILE, JSON.stringify(messages, null, 2));
+  } catch (error) {
+    console.error('Error saving messages:', error);
+    throw error;
+  }
+}
+
+// IP Geolocation
+async function getLocationFromIP(ip) {
+  try {
+    const cleanIP = ip.replace(/^::ffff:/, '');
+    if (cleanIP === '127.0.0.1' || cleanIP === '::1' || cleanIP === 'localhost') {
+      return { country: 'Local', city: 'Local', region: 'Local' };
+    }
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
+    const response = await fetch(`http://ip-api.com/json/${cleanIP}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      return {
+        country: data.country || 'Unknown',
+        city: data.city || 'Unknown',
+        region: data.regionName || 'Unknown',
+        timezone: data.timezone,
+        isp: data.isp
       };
-      await fs.writeFile(ADMIN_FILE, JSON.stringify(adminData, null, 2));
-      console.log('🔐 Created new admin.json file');
-      
-      if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
-        console.log('⚠️  WARNING: Using default admin credentials! Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables!');
-      }
     }
   } catch (error) {
     console.error('Location lookup failed:', error);
@@ -96,7 +154,7 @@ async function initializeFiles() {
   return { country: 'Unknown', city: 'Unknown', region: 'Unknown' };
 }
 
-// Parse User Agent for detailed info
+// Parse User Agent
 function parseUserAgent(userAgent) {
   const info = {
     browser: 'Unknown',
@@ -140,7 +198,7 @@ function parseUserAgent(userAgent) {
   return info;
 }
 
-// Generate unique fingerprint for tracking
+// Generate unique fingerprint
 function generateFingerprint(req) {
   const data = [
     req.ip,
@@ -152,7 +210,7 @@ function generateFingerprint(req) {
   return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
 }
 
-// Get real IP address - optimized for Render
+// Get real IP address
 function getRealIP(req) {
   return req.ip || 
          req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
@@ -163,12 +221,24 @@ function getRealIP(req) {
          'unknown';
 }
 
-// Message submission endpoint
+// Admin authentication middleware
+function authenticateAdmin(req, res, next) {
+  const { username, password } = req.query;
+  
+  if (!username || !password || username !== ADMIN_CONFIG.username || password !== ADMIN_CONFIG.password) {
+    console.log('Unauthorized admin access attempt');
+    return res.status(401).json({ error: 'Unauthorized access' });
+  }
+  
+  next();
+}
+
+// Routes
 app.post('/submit', limiter, async (req, res) => {
   try {
     const { message, name } = req.body;
     
-    // Enhanced validation
+    // Validation
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ error: 'Message is required and cannot be empty' });
     }
@@ -179,12 +249,12 @@ app.post('/submit', limiter, async (req, res) => {
       return res.status(400).json({ error: 'Name too long (maximum 100 characters)' });
     }
 
-    // Get IP and user info
+    // Get user info
     const ip = getRealIP(req);
     const userAgentInfo = parseUserAgent(req.get('User-Agent'));
     const fingerprint = generateFingerprint(req);
     
-    // Get location (non-blocking)
+    // Get location
     let location = { country: 'Unknown', city: 'Unknown', region: 'Unknown' };
     try {
       location = await getLocationFromIP(ip);
@@ -198,36 +268,25 @@ app.post('/submit', limiter, async (req, res) => {
       message: message.trim(),
       name: name ? name.trim() : 'anonymous',
       timestamp: new Date().toISOString(),
-      
-      // Network Information
       ip: ip,
       fingerprint: fingerprint,
       location: location,
-      
-      // Device/Browser Information
       userAgent: req.get('User-Agent') || 'Unknown',
       browser: userAgentInfo.browser,
       os: userAgentInfo.os,
       device: userAgentInfo.device,
       isMobile: userAgentInfo.isMobile,
       isBot: userAgentInfo.isBot,
-      
-      // Request Headers
       headers: {
         acceptLanguage: req.get('Accept-Language'),
         acceptEncoding: req.get('Accept-Encoding'),
         referer: req.get('Referer'),
-        origin: req.get('Origin'),
-        userAgent: req.get('User-Agent')
+        origin: req.get('Origin')
       },
-      
-      // Additional Metadata
       messageLength: message.length,
       hasName: !!name,
       submissionDay: new Date().toLocaleDateString(),
       submissionHour: new Date().getHours(),
-      
-      // Security flags
       suspiciousActivity: {
         isBot: userAgentInfo.isBot,
         hasReferer: !!req.get('Referer'),
@@ -249,7 +308,7 @@ app.post('/submit', limiter, async (req, res) => {
       messageObj.suspiciousActivity.previousSubmissions = previousSubmissions.length;
     }
     
-    // Add message to array
+    // Add message
     messages.unshift(messageObj);
     
     // Keep only last 1000 messages
@@ -261,11 +320,11 @@ app.post('/submit', limiter, async (req, res) => {
     await saveMessages(messages);
     
     // Log submission
-    console.log('✅ New message submitted:');
-    console.log(`   From: ${messageObj.name} (${messageObj.location?.city || 'Unknown'})`);
-    console.log(`   Device: ${messageObj.device} | Browser: ${messageObj.browser} | OS: ${messageObj.os}`);
-    console.log(`   Message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
-    console.log(`   Total messages: ${messages.length}`);
+    console.log('New message submitted:');
+    console.log(`From: ${messageObj.name} (${messageObj.location?.city || 'Unknown'})`);
+    console.log(`Device: ${messageObj.device} | Browser: ${messageObj.browser} | OS: ${messageObj.os}`);
+    console.log(`Message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+    console.log(`Total messages: ${messages.length}`);
     
     res.json({ 
       success: true,
@@ -274,29 +333,13 @@ app.post('/submit', limiter, async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Error submitting message:', error);
+    console.error('Error submitting message:', error);
     res.status(500).json({ error: 'Internal server error. Please try again later.' });
   }
 });
 
-// Admin endpoint
-app.get('/admin/messages', async (req, res) => {
+app.get('/admin/messages', authenticateAdmin, async (req, res) => {
   try {
-    const { username, password } = req.query;
-    
-    let adminData;
-    try {
-      adminData = JSON.parse(await fs.readFile(ADMIN_FILE, 'utf8'));
-    } catch (error) {
-      console.error('Error reading admin file:', error);
-      return res.status(500).json({ error: 'Server configuration error' });
-    }
-    
-    if (!username || !password || username !== adminData.username || password !== adminData.password) {
-      console.log('❌ Unauthorized admin access attempt');
-      return res.status(401).json({ error: 'Unauthorized access' });
-    }
-    
     const messages = await readMessages();
     
     // Generate analytics
@@ -327,7 +370,7 @@ app.get('/admin/messages', async (req, res) => {
       analytics.hourlyDistribution[hour] = (analytics.hourlyDistribution[hour] || 0) + 1;
     });
     
-    console.log('✅ Admin accessed messages dashboard');
+    console.log('Admin accessed messages dashboard');
     
     res.json({ 
       success: true,
@@ -337,22 +380,14 @@ app.get('/admin/messages', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Error fetching messages:', error);
+    console.error('Error fetching messages:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Delete message endpoint
-app.delete('/admin/messages/:id', async (req, res) => {
+app.delete('/admin/messages/:id', authenticateAdmin, async (req, res) => {
   try {
-    const { username, password } = req.query;
     const { id } = req.params;
-    
-    const adminData = JSON.parse(await fs.readFile(ADMIN_FILE, 'utf8'));
-    
-    if (!username || !password || username !== adminData.username || password !== adminData.password) {
-      return res.status(401).json({ error: 'Unauthorized access' });
-    }
     
     const messages = await readMessages();
     const filteredMessages = messages.filter(msg => msg.id !== id);
@@ -362,19 +397,18 @@ app.delete('/admin/messages/:id', async (req, res) => {
     }
     
     await saveMessages(filteredMessages);
-    console.log(`🗑️  Message ${id} deleted by admin`);
+    console.log(`Message ${id} deleted by admin`);
     
     res.json({ success: true, message: 'Message deleted successfully' });
     
   } catch (error) {
-    console.error('❌ Error deleting message:', error);
+    console.error('Error deleting message:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Test endpoint
 app.post('/test', (req, res) => {
-  console.log('🧪 Test endpoint hit:', {
+  console.log('Test endpoint hit:', {
     body: req.body,
     ip: getRealIP(req),
     userAgent: req.get('User-Agent'),
@@ -389,7 +423,6 @@ app.post('/test', (req, res) => {
   });
 });
 
-// Health check - important for Render
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -400,115 +433,59 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('❌ Server error:', err.stack);
+  console.error('Server error:', err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
 // 404 handler
 app.use((req, res) => {
-  console.log('❌ 404 - Endpoint not found:', req.method, req.path);
+  console.log('404 - Endpoint not found:', req.method, req.path);
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Start server
+// Start server function
 async function startServer() {
   try {
     await initializeFiles();
     
     app.listen(PORT, '0.0.0.0', () => {
-      console.log('🚀 Anonymous Message Server Started on Render!');
-      console.log(`📱 Port: ${PORT}`);
-      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔒 Data Directory: ${DATA_DIR}`);
+      console.log('Anonymous Message Server Started!');
+      console.log(`Port: ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Data Directory: ${DATA_DIR}`);
+      console.log(`Admin Username: ${ADMIN_CONFIG.username}`);
       
       if (process.env.NODE_ENV === 'production') {
-        console.log('✅ Production mode enabled');
-        console.log('🔐 Using environment variables for admin credentials');
+        console.log('Production mode enabled');
+        console.log('Using environment variables for admin credentials');
       } else {
-        console.log('⚠️  Development mode - set NODE_ENV=production for deployment');
+        console.log('Development mode - set NODE_ENV=production for deployment');
       }
       
-      console.log('📊 Ready to receive messages!');
+      console.log('Ready to receive messages!');
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('🛑 Received SIGTERM, shutting down gracefully...');
+  console.log('Received SIGTERM, shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('🛑 Received SIGINT, shutting down gracefully...');
+  console.log('Received SIGINT, shutting down gracefully...');
   process.exit(0);
 });
 
-startServer();.error('❌ Error initializing files:', error);
-    throw error;
-  }
-}
-
-// Helper functions with better error handling
-async function readMessages() {
-  try {
-    const data = await fs.readFile(MESSAGES_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Error reading messages:', error);
-    return [];
-  }
-}
-
-async function saveMessages(messages) {
-  try {
-    await fs.writeFile(MESSAGES_FILE, JSON.stringify(messages, null, 2));
-  } catch (error) {
-    console.error('Error saving messages:', error);
-    throw error;
-  }
-}
-
-// IP Geolocation with timeout and fallback
-async function getLocationFromIP(ip) {
-  try {
-    const cleanIP = ip.replace(/^::ffff:/, '');
-    if (cleanIP === '127.0.0.1' || cleanIP === '::1' || cleanIP === 'localhost') {
-      return { country: 'Local', city: 'Local', region: 'Local' };
-    }
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // Reduced timeout for Render
-    
-    const response = await fetch(`http://ip-api.com/json/${cleanIP}`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.status === 'success') {
-      return {
-        country: data.country || 'Unknown',
-        city: data.city || 'Unknown',
-        region: data.regionName || 'Unknown',
-        timezone: data.timezone,
-        isp: data.isp
-      };
-    }
-  } catch (error) {
-    console
+// Start the server
+startServer();
