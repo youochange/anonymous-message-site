@@ -58,6 +58,13 @@ const limiter = rateLimit({
 const DATA_DIR = process.env.RENDER_PERSISTENT_DISK || path.join(__dirname, 'data');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 
+// Debug file locations
+console.log('=== FILE LOCATION DEBUG ===');
+console.log('__dirname:', __dirname);
+console.log('DATA_DIR:', DATA_DIR);
+console.log('MESSAGES_FILE:', MESSAGES_FILE);
+console.log('process.env.RENDER_PERSISTENT_DISK:', process.env.RENDER_PERSISTENT_DISK);
+
 // Admin credentials
 const ADMIN_CONFIG = {
   username: process.env.ADMIN_USERNAME || 'admin',
@@ -79,12 +86,20 @@ function validateAdminConfig() {
 // Initialize data files
 async function initializeFiles() {
   try {
+    console.log('=== INITIALIZING FILES ===');
+    console.log('Creating data directory:', DATA_DIR);
     await fs.mkdir(DATA_DIR, { recursive: true });
     
     try {
       await fs.access(MESSAGES_FILE);
-      console.log('Messages file found');
+      console.log('Messages file found at:', MESSAGES_FILE);
+      
+      // Check current file content
+      const currentContent = await fs.readFile(MESSAGES_FILE, 'utf8');
+      const currentMessages = JSON.parse(currentContent);
+      console.log('Current messages count:', currentMessages.length);
     } catch {
+      console.log('Messages file not found, creating new one at:', MESSAGES_FILE);
       await fs.writeFile(MESSAGES_FILE, JSON.stringify([]));
       console.log('Created new messages.json file');
     }
@@ -100,8 +115,11 @@ async function initializeFiles() {
 // Helper functions
 async function readMessages() {
   try {
+    console.log('Reading messages from:', MESSAGES_FILE);
     const data = await fs.readFile(MESSAGES_FILE, 'utf8');
-    return JSON.parse(data);
+    const messages = JSON.parse(data);
+    console.log('Successfully read', messages.length, 'messages');
+    return messages;
   } catch (error) {
     console.error('Error reading messages:', error);
     return [];
@@ -110,7 +128,15 @@ async function readMessages() {
 
 async function saveMessages(messages) {
   try {
+    console.log('Saving', messages.length, 'messages to:', MESSAGES_FILE);
     await fs.writeFile(MESSAGES_FILE, JSON.stringify(messages, null, 2));
+    console.log('Successfully saved messages to file');
+    
+    // Verify the save
+    const verifyData = await fs.readFile(MESSAGES_FILE, 'utf8');
+    const verifyMessages = JSON.parse(verifyData);
+    console.log('Verification: File now contains', verifyMessages.length, 'messages');
+    
   } catch (error) {
     console.error('Error saving messages:', error);
     throw error;
@@ -235,29 +261,55 @@ function authenticateAdmin(req, res, next) {
 
 // Routes
 app.post('/submit', limiter, async (req, res) => {
+  console.log('=== SUBMISSION STARTED ===');
+  console.log('Request body:', req.body);
+  console.log('Request IP:', getRealIP(req));
+  console.log('Request headers:', {
+    'user-agent': req.get('User-Agent'),
+    'content-type': req.get('Content-Type'),
+    'origin': req.get('Origin'),
+    'referer': req.get('Referer')
+  });
+  
   try {
     const { message, name } = req.body;
     
     // Validation
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      console.log('Validation failed: Empty message');
       return res.status(400).json({ error: 'Message is required and cannot be empty' });
     }
     if (message.length > 1000) {
+      console.log('Validation failed: Message too long');
       return res.status(400).json({ error: 'Message too long (maximum 1000 characters)' });
     }
     if (name && name.length > 100) {
+      console.log('Validation failed: Name too long');
       return res.status(400).json({ error: 'Name too long (maximum 100 characters)' });
     }
+
+    console.log('Validation passed');
 
     // Get user info
     const ip = getRealIP(req);
     const userAgentInfo = parseUserAgent(req.get('User-Agent'));
     const fingerprint = generateFingerprint(req);
     
+    console.log('User info gathered:', { 
+      ip, 
+      browser: userAgentInfo.browser, 
+      device: userAgentInfo.device,
+      os: userAgentInfo.os,
+      isMobile: userAgentInfo.isMobile,
+      fingerprint
+    });
+    
     // Get location
     let location = { country: 'Unknown', city: 'Unknown', region: 'Unknown' };
     try {
+      console.log('Looking up location for IP:', ip);
       location = await getLocationFromIP(ip);
+      console.log('Location resolved:', location);
     } catch (error) {
       console.error('Location lookup failed:', error);
     }
@@ -294,8 +346,13 @@ app.post('/submit', limiter, async (req, res) => {
       }
     };
 
+    console.log('Message object created with ID:', messageObj.id);
+    console.log('Message preview:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
+
     // Read existing messages
+    console.log('=== READING EXISTING MESSAGES ===');
     const messages = await readMessages();
+    console.log('Existing messages count:', messages.length);
     
     // Check for multiple submissions
     const previousSubmissions = messages.filter(msg => 
@@ -306,35 +363,65 @@ app.post('/submit', limiter, async (req, res) => {
     if (previousSubmissions.length > 0) {
       messageObj.suspiciousActivity.multipleSubmissions = true;
       messageObj.suspiciousActivity.previousSubmissions = previousSubmissions.length;
+      console.log('Multiple submissions detected:', previousSubmissions.length);
     }
     
     // Add message
+    console.log('=== ADDING MESSAGE TO ARRAY ===');
     messages.unshift(messageObj);
+    console.log('Message added to array, new count:', messages.length);
     
     // Keep only last 1000 messages
     if (messages.length > 1000) {
       messages.splice(1000);
+      console.log('Trimmed to 1000 messages');
     }
     
     // Save messages
+    console.log('=== SAVING MESSAGES ===');
     await saveMessages(messages);
+    console.log('Messages saved successfully');
     
-    // Log submission
-    console.log('New message submitted:');
+    // Final verification
+    console.log('=== FINAL VERIFICATION ===');
+    const finalVerification = await readMessages();
+    console.log('Final verification: File contains', finalVerification.length, 'messages');
+    
+    const lastMessage = finalVerification[0];
+    if (lastMessage && lastMessage.id === messageObj.id) {
+      console.log('✓ SUCCESS: New message is at the top of the file');
+    } else {
+      console.log('✗ WARNING: New message might not have been saved correctly');
+    }
+    
+    // Log submission summary
+    console.log('=== SUBMISSION SUMMARY ===');
     console.log(`From: ${messageObj.name} (${messageObj.location?.city || 'Unknown'})`);
     console.log(`Device: ${messageObj.device} | Browser: ${messageObj.browser} | OS: ${messageObj.os}`);
     console.log(`Message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
     console.log(`Total messages: ${messages.length}`);
+    console.log(`File path: ${MESSAGES_FILE}`);
     
     res.json({ 
       success: true,
       message: 'Message submitted successfully! Thank you for your message.',
-      id: messageObj.id 
+      id: messageObj.id,
+      debug: {
+        messagesCount: messages.length,
+        filePath: MESSAGES_FILE,
+        timestamp: new Date().toISOString(),
+        messageId: messageObj.id
+      }
     });
     
   } catch (error) {
-    console.error('Error submitting message:', error);
-    res.status(500).json({ error: 'Internal server error. Please try again later.' });
+    console.error('=== ERROR IN SUBMISSION ===');
+    console.error('Error details:', error);
+    console.error('Stack trace:', error.stack);
+    res.status(500).json({ 
+      error: 'Internal server error. Please try again later.',
+      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -408,6 +495,7 @@ app.delete('/admin/messages/:id', authenticateAdmin, async (req, res) => {
 });
 
 app.post('/test', (req, res) => {
+  console.log('=== TEST ENDPOINT HIT ===');
   console.log('Test endpoint hit:', {
     body: req.body,
     ip: getRealIP(req),
@@ -429,7 +517,9 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    dataDir: DATA_DIR,
+    messagesFile: MESSAGES_FILE
   });
 });
 
@@ -455,10 +545,12 @@ async function startServer() {
     await initializeFiles();
     
     app.listen(PORT, '0.0.0.0', () => {
+      console.log('=== SERVER STARTED ===');
       console.log('Anonymous Message Server Started!');
       console.log(`Port: ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`Data Directory: ${DATA_DIR}`);
+      console.log(`Messages File: ${MESSAGES_FILE}`);
       console.log(`Admin Username: ${ADMIN_CONFIG.username}`);
       
       if (process.env.NODE_ENV === 'production') {
@@ -469,6 +561,7 @@ async function startServer() {
       }
       
       console.log('Ready to receive messages!');
+      console.log('=== SERVER READY ===');
     });
   } catch (error) {
     console.error('Failed to start server:', error);
