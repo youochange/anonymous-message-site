@@ -263,6 +263,7 @@ function authenticateAdmin(req, res, next) {
 app.post('/submit', limiter, async (req, res) => {
   console.log('=== SUBMISSION STARTED ===');
   console.log('Request body:', req.body);
+  console.log('Request body type:', typeof req.body);
   console.log('Request IP:', getRealIP(req));
   console.log('Request headers:', {
     'user-agent': req.get('User-Agent'),
@@ -271,21 +272,42 @@ app.post('/submit', limiter, async (req, res) => {
     'referer': req.get('Referer')
   });
   
+  // Set response headers early
+  res.setHeader('Content-Type', 'application/json');
+  
   try {
+    // Check if body exists and is an object
+    if (!req.body || typeof req.body !== 'object') {
+      console.log('Invalid request body:', req.body);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid request body. Please send JSON data.' 
+      });
+    }
+    
     const { message, name } = req.body;
     
     // Validation
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      console.log('Validation failed: Empty message');
-      return res.status(400).json({ error: 'Message is required and cannot be empty' });
+      console.log('Validation failed: Empty message. Received:', message);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Message is required and cannot be empty' 
+      });
     }
     if (message.length > 1000) {
       console.log('Validation failed: Message too long');
-      return res.status(400).json({ error: 'Message too long (maximum 1000 characters)' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Message too long (maximum 1000 characters)' 
+      });
     }
     if (name && name.length > 100) {
       console.log('Validation failed: Name too long');
-      return res.status(400).json({ error: 'Name too long (maximum 100 characters)' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Name too long (maximum 100 characters)' 
+      });
     }
 
     console.log('Validation passed');
@@ -406,6 +428,15 @@ app.post('/submit', limiter, async (req, res) => {
       success: true,
       message: 'Message submitted successfully! Thank you for your message.',
       id: messageObj.id,
+      status: 'OK',
+      data: {
+        messageId: messageObj.id,
+        timestamp: messageObj.timestamp,
+        name: messageObj.name,
+        messageLength: messageObj.messageLength,
+        totalMessages: messages.length,
+        location: messageObj.location?.city || 'Unknown'
+      },
       debug: {
         messagesCount: messages.length,
         filePath: MESSAGES_FILE,
@@ -418,9 +449,16 @@ app.post('/submit', limiter, async (req, res) => {
     console.error('=== ERROR IN SUBMISSION ===');
     console.error('Error details:', error);
     console.error('Stack trace:', error.stack);
+    
+    // Ensure we always return a proper JSON response
     res.status(500).json({ 
+      success: false,
       error: 'Internal server error. Please try again later.',
-      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Something went wrong on our end.',
+      debug: process.env.NODE_ENV === 'development' ? {
+        error: error.message,
+        stack: error.stack
+      } : undefined
     });
   }
 });
@@ -498,16 +536,23 @@ app.post('/test', (req, res) => {
   console.log('=== TEST ENDPOINT HIT ===');
   console.log('Test endpoint hit:', {
     body: req.body,
+    bodyType: typeof req.body,
     ip: getRealIP(req),
     userAgent: req.get('User-Agent'),
+    contentType: req.get('Content-Type'),
     headers: req.headers
   });
+  
   res.json({ 
     success: true, 
     message: 'Test endpoint working!',
     received: req.body,
     ip: getRealIP(req),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    headers: {
+      'content-type': req.get('Content-Type'),
+      'user-agent': req.get('User-Agent')
+    }
   });
 });
 
