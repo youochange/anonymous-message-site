@@ -10,7 +10,7 @@
   <div class="container py-5">
     <h1 class="text-center mb-4">Leave a Message for <strong>youochange</strong></h1>
     <blockquote class="blockquote text-center">
-      <p class="mb-0"></p>
+      <p class="mb-0">Share your thoughts anonymously</p>
       <footer class="blockquote-footer">youochange</footer>
     </blockquote>
     <form id="messageForm" class="mt-4">
@@ -34,28 +34,43 @@
       const message = document.getElementById('message').value.trim();
       const name = document.getElementById('name').value.trim() || 'anonymous';
       const statusDiv = document.getElementById('status');
+      const submitBtn = document.querySelector('button[type="submit"]');
 
       if (!message) {
         statusDiv.innerHTML = `<div class="alert alert-danger">Please enter a message.</div>`;
         return;
       }
 
+      // Disable submit button and show loading
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting...';
+      statusDiv.innerHTML = `<div class="alert alert-info">Submitting your message...</div>`;
+
       try {
-        const res = await fetch('/submit', {
+        const res = await fetch('/api/submit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
           body: JSON.stringify({ message, name })
         });
 
-        if (!res.ok) {
-          throw new Error(`Server error: ${res.status}`);
-        }
-
         const data = await res.json();
-        statusDiv.innerHTML = `<div class="alert alert-success">${data.msg}</div>`;
-        document.getElementById('messageForm').reset();
+        
+        if (res.ok && data.success) {
+          statusDiv.innerHTML = `<div class="alert alert-success">${data.message || data.msg || 'Message submitted successfully!'}</div>`;
+          document.getElementById('messageForm').reset();
+        } else {
+          statusDiv.innerHTML = `<div class="alert alert-danger">${data.error || 'Failed to submit message'}</div>`;
+        }
       } catch (error) {
-        statusDiv.innerHTML = `<div class="alert alert-danger">Failed to submit message: ${error.message}</div>`;
+        console.error('Submit error:', error);
+        statusDiv.innerHTML = `<div class="alert alert-danger">Failed to submit message. Please try again.</div>`;
+      } finally {
+        // Re-enable submit button
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit';
       }
     });
   </script>
