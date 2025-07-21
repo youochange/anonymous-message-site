@@ -9,14 +9,20 @@
     "vercel-build": "echo 'Building for Vercel'"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "@vercel/kv": "^3.0.0",
     "cors": "^2.8.5",
-    "express-rate-limit": "^6.7.0"
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.7.0",
+    "redis": "^5.6.0"
   },
   "engines": {
     "node": ">=14.0.0"
   },
-  "keywords": ["anonymous", "message", "submission"],
+  "keywords": [
+    "anonymous",
+    "message",
+    "submission"
+  ],
   "author": "youochange",
   "license": "MIT"
 }
